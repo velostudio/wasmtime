@@ -246,6 +246,7 @@ impl JITModule {
             .allocate(
                 std::mem::size_of::<AtomicPtr<u8>>(),
                 std::mem::align_of::<AtomicPtr<u8>>().try_into().unwrap(),
+                None,
             )
             .unwrap()
             .cast::<AtomicPtr<u8>>();
@@ -264,6 +265,7 @@ impl JITModule {
                 self.isa
                     .symbol_alignment()
                     .max(self.isa.function_alignment().minimum as u64),
+                None,
             )
             .unwrap()
             .cast::<[u8; 16]>();
@@ -294,10 +296,10 @@ impl JITModule {
     }
 
     unsafe fn write_plt_entry_bytes(plt_ptr: *mut [u8; 16], got_ptr: NonNull<AtomicPtr<u8>>) {
-        assert!(
-            cfg!(target_arch = "x86_64"),
-            "PLT is currently only supported on x86_64"
-        );
+        // assert!(
+        //     cfg!(target_arch = "x86_64"),
+        //     "PLT is currently only supported on x86_64"
+        // );
         // jmp *got_ptr; ud2; ud2; ud2; ud2; ud2
         let mut plt_val = [
             0xff, 0x25, 0, 0, 0, 0, 0x0f, 0x0b, 0x0f, 0x0b, 0x0f, 0x0b, 0x0f, 0x0b, 0x0f, 0x0b,
@@ -589,6 +591,7 @@ impl JITModule {
         }
 
         self.compiled_functions[func_id] = None;
+        self.memory.code.deallocate_func(func_id);
 
         // FIXME return some kind of handle that allows for deallocating the function
 
@@ -713,7 +716,7 @@ impl Module for JITModule {
         let ptr = self
             .memory
             .code
-            .allocate(size, align)
+            .allocate(size, align, Some(id))
             .map_err(|e| ModuleError::Allocation {
                 message: "unable to alloc function",
                 err: e,
@@ -798,7 +801,7 @@ impl Module for JITModule {
         let ptr = self
             .memory
             .code
-            .allocate(size, align)
+            .allocate(size, align, Some(id))
             .map_err(|e| ModuleError::Allocation {
                 message: "unable to alloc function bytes",
                 err: e,
@@ -875,7 +878,7 @@ impl Module for JITModule {
         } else if decl.writable {
             self.memory
                 .writable
-                .allocate(size, align.unwrap_or(WRITABLE_DATA_ALIGNMENT))
+                .allocate(size, align.unwrap_or(WRITABLE_DATA_ALIGNMENT), None)
                 .map_err(|e| ModuleError::Allocation {
                     message: "unable to alloc writable data",
                     err: e,
@@ -883,7 +886,7 @@ impl Module for JITModule {
         } else {
             self.memory
                 .readonly
-                .allocate(size, align.unwrap_or(READONLY_DATA_ALIGNMENT))
+                .allocate(size, align.unwrap_or(READONLY_DATA_ALIGNMENT), None)
                 .map_err(|e| ModuleError::Allocation {
                     message: "unable to alloc readonly data",
                     err: e,

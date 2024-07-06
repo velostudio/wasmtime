@@ -1,3 +1,4 @@
+use cranelift_module::FuncId;
 use cranelift_module::{ModuleError, ModuleResult};
 
 #[cfg(all(not(target_os = "windows"), feature = "selinux-fix"))]
@@ -127,6 +128,7 @@ pub(crate) enum BranchProtection {
 pub(crate) struct Memory {
     allocations: Vec<PtrLen>,
     already_protected: usize,
+    func_ids: std::collections::HashMap<FuncId, PtrLen>,
     current: PtrLen,
     position: usize,
     branch_protection: BranchProtection,
@@ -139,6 +141,7 @@ impl Memory {
         Self {
             allocations: Vec::new(),
             already_protected: 0,
+            func_ids: std::collections::HashMap::new(),
             current: PtrLen::new(),
             position: 0,
             branch_protection,
@@ -151,14 +154,20 @@ impl Memory {
         self.position = 0;
     }
 
-    pub(crate) fn allocate(&mut self, size: usize, align: u64) -> io::Result<*mut u8> {
+    pub(crate) fn deallocate_func(&mut self, func_id: FuncId) {
+        let ptr_len = self.func_ids.remove(&func_id)
+            .expect(format!("no allocated func with {} funcid", func_id).as_str());
+        drop(ptr_len);
+    }
+
+    pub(crate) fn allocate(&mut self, size: usize, align: u64, func_id: Option<FuncId>) -> io::Result<*mut u8> {
         let align = usize::try_from(align).expect("alignment too big");
         if self.position % align != 0 {
             self.position += align - self.position % align;
             debug_assert!(self.position % align == 0);
         }
 
-        if size <= self.current.len - self.position {
+        if func_id.is_none() && size <= self.current.len - self.position {
             // TODO: Ensure overflow is not possible.
             let ptr = unsafe { self.current.ptr.add(self.position) };
             self.position += size;
@@ -166,9 +175,13 @@ impl Memory {
         }
 
         self.finish_current();
-
         // TODO: Allocate more at a time.
         self.current = PtrLen::with_size(size)?;
+
+        if let Some(func_id) = func_id {
+            self.func_ids.insert(func_id, mem::replace(&mut self.current, PtrLen::new()));
+        }
+
         self.position = size;
 
         Ok(self.current.ptr)
